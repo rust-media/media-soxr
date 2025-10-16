@@ -1,0 +1,18 @@
+[package]
+name = "media-soxr-sys"
+description = "Rust bindings to soxr"
+homepage = "https://github.com/rust-media"
+repository = "https://github.com/rust-media/media-soxr"
+version = "0.1.0"
+authors = ["Zhou Wei <zhouwei@ehom.net>"]
+license = "LGPL-2.1"
+categories = ["multimedia::audio"]
+keywords = ["soxr", "libsoxr", "resample"]
+edition = "2021"
+
+[build-dependencies]
+bindgen = "0.72"
+cmake = "0.1"
+
+[features]
+dynamic = []

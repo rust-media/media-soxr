@@ -1,0 +1,20 @@
+[package]
+name = "media-soxr"
+description = "Rust bindings to soxr"
+homepage = "https://github.com/rust-media"
+repository = "https://github.com/rust-media/media-soxr"
+documentation = "https://docs.rs/media-soxr"
+version = "0.1.0"
+authors = ["Zhou Wei <zhouwei@ehom.net>"]
+license = "LGPL-2.1"
+categories = ["multimedia::audio"]
+keywords = ["soxr", "libsoxr", "resample"]
+edition = "2021"
+
+[dependencies]
+bitflags = "2.9"
+media-soxr-sys = { version = "0.1.0", path = "sys" }
+smallvec = "1.15"
+
+[features]
+soxr_dynamic = ["media-soxr-sys/dynamic"]
