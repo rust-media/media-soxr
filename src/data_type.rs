@@ -1,4 +1,9 @@
-use crate::soxr_sys::soxr_datatype_t;
+use crate::{
+    error::{Error, Result},
+    soxr_sys::soxr_datatype_t,
+};
+
+const UNSUPPORTED_DATA_TYPE: &str = "unsupported data type";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(i32)]
@@ -11,6 +16,7 @@ pub enum DataType {
     Float64S = soxr_datatype_t::SOXR_FLOAT64_S as i32,
     Int32S   = soxr_datatype_t::SOXR_INT32_S as i32,
     Int16S   = soxr_datatype_t::SOXR_INT16_S as i32,
+    Dynamic,
 }
 
 impl DataType {
@@ -23,17 +29,20 @@ impl DataType {
     }
 }
 
-impl From<DataType> for soxr_datatype_t {
-    fn from(dt: DataType) -> Self {
+impl TryFrom<DataType> for soxr_datatype_t {
+    type Error = Error;
+
+    fn try_from(dt: DataType) -> Result<Self> {
         match dt {
-            DataType::Float32I => soxr_datatype_t::SOXR_FLOAT32_I,
-            DataType::Float64I => soxr_datatype_t::SOXR_FLOAT64_I,
-            DataType::Int32I => soxr_datatype_t::SOXR_INT32_I,
-            DataType::Int16I => soxr_datatype_t::SOXR_INT16_I,
-            DataType::Float32S => soxr_datatype_t::SOXR_FLOAT32_S,
-            DataType::Float64S => soxr_datatype_t::SOXR_FLOAT64_S,
-            DataType::Int32S => soxr_datatype_t::SOXR_INT32_S,
-            DataType::Int16S => soxr_datatype_t::SOXR_INT16_S,
+            DataType::Float32I => Ok(soxr_datatype_t::SOXR_FLOAT32_I),
+            DataType::Float64I => Ok(soxr_datatype_t::SOXR_FLOAT64_I),
+            DataType::Int32I => Ok(soxr_datatype_t::SOXR_INT32_I),
+            DataType::Int16I => Ok(soxr_datatype_t::SOXR_INT16_I),
+            DataType::Float32S => Ok(soxr_datatype_t::SOXR_FLOAT32_S),
+            DataType::Float64S => Ok(soxr_datatype_t::SOXR_FLOAT64_S),
+            DataType::Int32S => Ok(soxr_datatype_t::SOXR_INT32_S),
+            DataType::Int16S => Ok(soxr_datatype_t::SOXR_INT16_S),
+            DataType::Dynamic => Err(Error::with_str(UNSUPPORTED_DATA_TYPE)),
         }
     }
 }

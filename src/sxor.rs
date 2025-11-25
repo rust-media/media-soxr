@@ -1,5 +1,5 @@
 use std::{
-    ffi::{c_uint, CStr},
+    ffi::{c_uint, c_void, CStr},
     marker::PhantomData,
     ptr,
 };
@@ -20,6 +20,7 @@ pub trait Sample {
 
 pub struct Packed<T>(PhantomData<T>);
 pub struct Planar<T>(PhantomData<T>);
+pub struct DynamicSample;
 
 impl Sample for Packed<f32> {
     type ValueType = f32;
@@ -61,6 +62,11 @@ impl Sample for Planar<i16> {
     const DATA_TYPE: DataType = DataType::Int16S;
 }
 
+impl Sample for DynamicSample {
+    type ValueType = u8;
+    const DATA_TYPE: DataType = DataType::Dynamic;
+}
+
 pub enum SampleBuffer<'a, T: Sample> {
     Packed(&'a [T::ValueType]),
     Planar(&'a [&'a [T::ValueType]]),
@@ -71,11 +77,13 @@ pub enum SampleBufferMut<'a, T: Sample> {
     Planar(&'a mut [&'a mut [T::ValueType]]),
 }
 
-const DEFAULT_MAX_CHANNELS: usize = 8;
+const DEFAULT_MAX_CHANNELS: usize = 16;
 
-pub struct Soxr<I: Sample, O: Sample> {
+pub struct Soxr<I: Sample = DynamicSample, O: Sample = DynamicSample> {
     soxr: soxr_sys::soxr_t,
     channels: u8,
+    input_data_type: Option<DataType>,
+    output_data_type: Option<DataType>,
     _phantom: PhantomData<(I, O)>,
 }
 
@@ -113,6 +121,45 @@ impl<I: Sample, O: Sample> Soxr<I, O> {
         Ok(Self {
             soxr,
             channels: num_channels,
+            input_data_type: None,
+            output_data_type: None,
+            _phantom: PhantomData,
+        })
+    }
+
+    pub fn new_with_data_type(
+        input_data_type: DataType,
+        output_data_type: DataType,
+        input_rate: f64,
+        output_rate: f64,
+        num_channels: u8,
+        quality_spec: Option<&QualitySpec>,
+        runtime_spec: Option<&RuntimeSpec>,
+    ) -> Result<Self> {
+        let mut err: soxr_sys::soxr_error_t = ptr::null_mut();
+        let io_spec = IOSpec::new(input_data_type, output_data_type)?;
+
+        let soxr = unsafe {
+            soxr_sys::soxr_create(
+                input_rate,
+                output_rate,
+                num_channels as c_uint,
+                &mut err,
+                &io_spec.io_spec,
+                quality_spec.map_or(ptr::null(), |spec| &spec.quality_spec),
+                runtime_spec.map_or(ptr::null(), |spec| &spec.runtime_spec),
+            )
+        };
+
+        if !err.is_null() {
+            return Err(Error::new(err));
+        }
+
+        Ok(Self {
+            soxr,
+            channels: num_channels,
+            input_data_type: Some(input_data_type),
+            output_data_type: Some(output_data_type),
             _phantom: PhantomData,
         })
     }
@@ -123,6 +170,19 @@ impl<I: Sample, O: Sample> Soxr<I, O> {
         } else {
             Ok(())
         }
+    }
+
+    unsafe fn process_internal(&mut self, in_ptr: *const c_void, in_len: usize, out_ptr: *mut c_void, out_len: usize) -> Result<(usize, usize)> {
+        let mut idone: usize = 0;
+        let mut odone: usize = 0;
+
+        let err = unsafe { soxr_sys::soxr_process(self.soxr, in_ptr, in_len, &mut idone, out_ptr, out_len, &mut odone) };
+
+        if !err.is_null() {
+            return Err(Error::new(err));
+        }
+
+        Ok((idone, odone))
     }
 
     pub fn process(&mut self, input: Option<SampleBuffer<I>>, output: SampleBufferMut<O>) -> Result<(usize, usize)> {
@@ -148,16 +208,49 @@ impl<I: Sample, O: Sample> Soxr<I, O> {
             }
         };
 
-        let mut idone: usize = 0;
-        let mut odone: usize = 0;
+        unsafe { self.process_internal(in_ptr, in_len, out_ptr, out_len) }
+    }
 
-        let err = unsafe { soxr_sys::soxr_process(self.soxr, in_ptr, in_len, &mut idone, out_ptr, out_len, &mut odone) };
-
-        if !err.is_null() {
-            return Err(Error::new(err));
+    pub fn process_dynamic<In: Sample, Out: Sample>(
+        &mut self,
+        input: Option<SampleBuffer<In>>,
+        output: SampleBufferMut<Out>,
+    ) -> Result<(usize, usize)> {
+        if let Some(input_data_type) = self.input_data_type {
+            if input.is_some() && input_data_type != In::DATA_TYPE {
+                return Err(Error::with_str("input data type mismatch"));
+            }
         }
 
-        Ok((idone, odone))
+        if let Some(output_data_type) = self.output_data_type {
+            if output_data_type != Out::DATA_TYPE {
+                return Err(Error::with_str("output data type mismatch"));
+            }
+        }
+
+        let (in_ptr, in_len, _in_vec) = match input {
+            Some(SampleBuffer::Packed(buf)) => (buf.as_ptr() as *const _, buf.len() / self.channels as usize, None),
+            Some(SampleBuffer::Planar(bufs)) => {
+                self.validate_channels(bufs.len())?;
+                let samples = bufs[0].len();
+                let buf_vec: SmallVec<[_; DEFAULT_MAX_CHANNELS]> = bufs.iter().map(|buf| buf.as_ref().as_ptr()).collect();
+                (buf_vec.as_ptr() as *const _, samples, Some(buf_vec))
+            }
+            None => (ptr::null(), 0, None),
+        };
+
+        let (out_ptr, out_len, _out_vec) = match output {
+            SampleBufferMut::Packed(buf) => (buf.as_mut_ptr() as *mut _, buf.len() / self.channels as usize, None),
+            SampleBufferMut::Planar(bufs) => {
+                self.validate_channels(bufs.len())?;
+                let samples = bufs[0].len();
+                let mut buf_vec: SmallVec<[_; DEFAULT_MAX_CHANNELS]> = bufs.iter_mut().map(|buf| buf.as_mut().as_mut_ptr()).collect();
+
+                (buf_vec.as_mut_ptr() as *mut _, samples, Some(buf_vec))
+            }
+        };
+
+        unsafe { self.process_internal(in_ptr, in_len, out_ptr, out_len) }
     }
 
     pub fn error(&self) -> Option<String> {

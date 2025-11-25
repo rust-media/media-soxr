@@ -11,7 +11,7 @@ pub struct IOSpec {
 
 impl IOSpec {
     pub fn new(input_type: DataType, output_type: DataType) -> Result<Self> {
-        let spec = unsafe { soxr_sys::soxr_io_spec(input_type.into(), output_type.into()) };
+        let spec = unsafe { soxr_sys::soxr_io_spec(input_type.try_into()?, output_type.try_into()?) };
 
         if !spec.e.is_null() {
             return Err(crate::error::Error::new(spec.e as soxr_sys::soxr_error_t));
